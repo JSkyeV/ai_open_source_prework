@@ -131,17 +131,51 @@ class GameClient {
         const direction = this.keyCodeToDirection(keyCode);
         if (!direction) return;
         
+        // Update facing direction first
+        if (this.myPlayer) {
+            this.myPlayer.facing = direction;
+        }
+        
+        // Calculate new position
+        const newPosition = this.calculateNewPosition(direction);
+        
         const moveMessage = {
             action: 'move',
-            direction: direction
+            x: newPosition.x,
+            y: newPosition.y
         };
         
         this.socket.send(JSON.stringify(moveMessage));
         this.lastSentDirection = direction;
         this.isMoving = true;
         
-        // Update our own position locally since server doesn't send it back
+        // Update our own position locally
         this.updateMyPosition(direction);
+    }
+    
+    calculateNewPosition(direction) {
+        if (!this.myPlayer) return { x: 0, y: 0 };
+        
+        const moveSpeed = 16;
+        let newX = this.myPlayer.x;
+        let newY = this.myPlayer.y;
+        
+        switch (direction) {
+            case 'up':
+                newY = Math.max(0, this.myPlayer.y - moveSpeed);
+                break;
+            case 'down':
+                newY = Math.min(this.worldHeight, this.myPlayer.y + moveSpeed);
+                break;
+            case 'left':
+                newX = Math.max(0, this.myPlayer.x - moveSpeed);
+                break;
+            case 'right':
+                newX = Math.min(this.worldWidth, this.myPlayer.x + moveSpeed);
+                break;
+        }
+        
+        return { x: newX, y: newY };
     }
     
     updateMyPosition(direction) {
@@ -166,13 +200,11 @@ class GameClient {
                 break;
         }
         
-        // Update facing direction
-        this.myPlayer.facing = direction;
+        // Facing direction already updated in sendMoveCommand
         
         console.log(`Moved ${direction}: (${oldX}, ${oldY}) -> (${this.myPlayer.x}, ${this.myPlayer.y})`);
         
-        // Update camera and render
-        this.updateCamera();
+        // Render will handle camera update
         this.render();
     }
     
@@ -261,16 +293,28 @@ class GameClient {
                 break;
                 
             case 'players_moved':
-                console.log('players_moved message:', message.players);
-                console.log('myPlayerId:', this.myPlayerId);
-                console.log('myPlayer before update:', this.myPlayer);
+                // Only log if my player is in the update
+                if (this.myPlayerId && message.players[this.myPlayerId]) {
+                    console.log('My player updated:', message.players[this.myPlayerId]);
+                }
                 Object.assign(this.players, message.players);
-                console.log('myPlayer after update:', this.myPlayer);
-                this.updateCamera();
+                // Camera will be updated by render() call at the end
                 break;
                 
             case 'player_left':
                 delete this.players[message.playerId];
+                break;
+                
+            case 'move':
+                if (!message.success) {
+                    console.error('Move command failed:', message.error);
+                }
+                break;
+                
+            case 'stop':
+                if (!message.success) {
+                    console.error('Stop command failed:', message.error);
+                }
                 break;
                 
             default:
@@ -281,12 +325,7 @@ class GameClient {
     }
     
     updateCamera() {
-        if (!this.myPlayer) {
-            console.log('updateCamera: myPlayer is null');
-            return;
-        }
-        
-        console.log('updateCamera: myPlayer position:', this.myPlayer.x, this.myPlayer.y);
+        if (!this.myPlayer) return;
         
         // Center camera on my avatar
         this.cameraX = this.myPlayer.x - this.canvas.width / 2;
@@ -295,8 +334,6 @@ class GameClient {
         // Clamp camera to map boundaries
         this.cameraX = Math.max(0, Math.min(this.cameraX, this.worldWidth - this.canvas.width));
         this.cameraY = Math.max(0, Math.min(this.cameraY, this.worldHeight - this.canvas.height));
-        
-        console.log('updateCamera: camera position:', this.cameraX, this.cameraY);
     }
     
     worldToScreen(worldX, worldY) {
@@ -384,6 +421,9 @@ class GameClient {
     
     async render() {
         if (!this.worldImage) return;
+        
+        // Update camera to follow my player
+        this.updateCamera();
         
         // Clear canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
