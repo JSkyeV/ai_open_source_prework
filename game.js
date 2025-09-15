@@ -16,6 +16,16 @@ class GameClient {
         // Image cache
         this.imageCache = new Map();
         
+        // Input state
+        this.pressedKeys = {
+            ArrowUp: false,
+            ArrowDown: false,
+            ArrowLeft: false,
+            ArrowRight: false
+        };
+        this.lastSentDirection = null;
+        this.isMoving = false;
+        
         // Camera/viewport
         this.cameraX = 0;
         this.cameraY = 0;
@@ -30,6 +40,7 @@ class GameClient {
     init() {
         this.setupCanvas();
         this.loadWorldMap();
+        this.setupInputHandlers();
         this.connectToServer();
     }
     
@@ -53,6 +64,115 @@ class GameClient {
             this.render();
         };
         this.worldImage.src = 'world.jpg';
+    }
+    
+    setupInputHandlers() {
+        // Handle keydown events
+        document.addEventListener('keydown', (event) => {
+            this.handleKeyDown(event);
+        });
+        
+        // Handle keyup events
+        document.addEventListener('keyup', (event) => {
+            this.handleKeyUp(event);
+        });
+    }
+    
+    handleKeyDown(event) {
+        // Only handle arrow keys
+        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
+            return;
+        }
+        
+        // Prevent default browser behavior
+        event.preventDefault();
+        
+        // If key was already pressed, don't send duplicate command
+        if (this.pressedKeys[event.code]) {
+            return;
+        }
+        
+        // Mark key as pressed
+        this.pressedKeys[event.code] = true;
+        
+        // Send move command
+        this.sendMoveCommand(event.code);
+    }
+    
+    handleKeyUp(event) {
+        // Only handle arrow keys
+        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
+            return;
+        }
+        
+        // Prevent default browser behavior
+        event.preventDefault();
+        
+        // Mark key as released
+        this.pressedKeys[event.code] = false;
+        
+        // Check if any movement keys are still pressed
+        const anyKeyPressed = Object.values(this.pressedKeys).some(pressed => pressed);
+        
+        if (!anyKeyPressed) {
+            // No keys pressed, send stop command
+            this.sendStopCommand();
+        } else {
+            // Other keys still pressed, send move command for the next priority direction
+            this.sendMoveCommandForPressedKeys();
+        }
+    }
+    
+    sendMoveCommand(keyCode) {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+        
+        const direction = this.keyCodeToDirection(keyCode);
+        if (!direction) return;
+        
+        const moveMessage = {
+            action: 'move',
+            direction: direction
+        };
+        
+        this.socket.send(JSON.stringify(moveMessage));
+        this.lastSentDirection = direction;
+        this.isMoving = true;
+    }
+    
+    sendStopCommand() {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+        
+        const stopMessage = {
+            action: 'stop'
+        };
+        
+        this.socket.send(JSON.stringify(stopMessage));
+        this.lastSentDirection = null;
+        this.isMoving = false;
+    }
+    
+    sendMoveCommandForPressedKeys() {
+        // Find the first pressed key and send its direction
+        for (const [keyCode, isPressed] of Object.entries(this.pressedKeys)) {
+            if (isPressed) {
+                this.sendMoveCommand(keyCode);
+                break;
+            }
+        }
+    }
+    
+    keyCodeToDirection(keyCode) {
+        const keyMap = {
+            'ArrowUp': 'up',
+            'ArrowDown': 'down',
+            'ArrowLeft': 'left',
+            'ArrowRight': 'right'
+        };
+        return keyMap[keyCode];
     }
     
     connectToServer() {
