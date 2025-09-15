@@ -275,8 +275,14 @@ class GameClient {
         const direction = player.facing || 'south';
         const frame = player.animationFrame || 0;
         
+        // Handle west direction by using east frames
+        const actualDirection = (direction === 'left' || direction === 'west') ? 'east' : direction;
+        console.log(direction);
+        console.log(player.username + " " + actualDirection);
+        const shouldFlip = (direction === 'left' || direction === 'west');
+        
         // Get the appropriate frame
-        const frameData = avatar.frames[direction]?.[frame];
+        const frameData = avatar.frames[actualDirection]?.[frame];
         if (!frameData) return;
         
         // Create cache key for this specific frame
@@ -307,8 +313,15 @@ class GameClient {
         const x = screenPos.x - width / 2;
         const y = screenPos.y - height;
         
-        // Draw avatar
-        this.ctx.drawImage(img, x, y, width, height);
+        // Draw avatar with optional horizontal flip for west direction
+        if (shouldFlip) {
+            this.ctx.save();
+            this.ctx.scale(-1, 1); // Flip horizontally
+            this.ctx.drawImage(img, -(x + width), y, width, height);
+            this.ctx.restore();
+        } else {
+            this.ctx.drawImage(img, x, y, width, height);
+        }
         
         // Draw username label
         this.ctx.fillStyle = 'white';
