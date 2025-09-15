@@ -7,12 +7,30 @@ class GameClient {
         this.worldWidth = 2048;
         this.worldHeight = 2048;
         
+        // Game state
+        this.players = {};
+        this.avatars = {};
+        this.myPlayerId = null;
+        this.myPlayer = null;
+        
+        // Image cache
+        this.imageCache = new Map();
+        
+        // Camera/viewport
+        this.cameraX = 0;
+        this.cameraY = 0;
+        
+        // WebSocket
+        this.socket = null;
+        this.serverUrl = 'wss://codepath-mmorg.onrender.com';
+        
         this.init();
     }
     
     init() {
         this.setupCanvas();
         this.loadWorldMap();
+        this.connectToServer();
     }
     
     setupCanvas() {
@@ -24,31 +42,186 @@ class GameClient {
         window.addEventListener('resize', () => {
             this.canvas.width = window.innerWidth;
             this.canvas.height = window.innerHeight;
-            this.drawWorld();
+            this.updateCamera();
+            this.render();
         });
     }
     
     loadWorldMap() {
         this.worldImage = new Image();
         this.worldImage.onload = () => {
-            this.drawWorld();
+            this.render();
         };
         this.worldImage.src = 'world.jpg';
     }
     
-    drawWorld() {
+    connectToServer() {
+        this.socket = new WebSocket(this.serverUrl);
+        
+        this.socket.onopen = () => {
+            console.log('Connected to game server');
+            this.joinGame();
+        };
+        
+        this.socket.onmessage = (event) => {
+            this.handleServerMessage(JSON.parse(event.data));
+        };
+        
+        this.socket.onclose = () => {
+            console.log('Disconnected from game server');
+        };
+        
+        this.socket.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+    }
+    
+    joinGame() {
+        const joinMessage = {
+            action: 'join_game',
+            username: 'Jadon'
+        };
+        
+        this.socket.send(JSON.stringify(joinMessage));
+    }
+    
+    handleServerMessage(message) {
+        switch (message.action) {
+            case 'join_game':
+                if (message.success) {
+                    console.log(message);
+                    this.myPlayerId = message.playerId;
+                    this.players = message.players;
+                    this.avatars = message.avatars;
+                    this.myPlayer = this.players[this.myPlayerId];
+                    this.updateCamera();
+                    console.log('Joined game successfully', this.myPlayer);
+                } else {
+                    console.error('Failed to join game:', message.error);
+                }
+                break;
+                
+            case 'player_joined':
+                this.players[message.player.id] = message.player;
+                this.avatars[message.avatar.name] = message.avatar;
+                break;
+                
+            case 'players_moved':
+                Object.assign(this.players, message.players);
+                break;
+                
+            case 'player_left':
+                delete this.players[message.playerId];
+                break;
+                
+            default:
+                console.log('Unknown message:', message);
+        }
+        
+        this.render();
+    }
+    
+    updateCamera() {
+        if (!this.myPlayer) return;
+        
+        // Center camera on my avatar
+        this.cameraX = this.myPlayer.x - this.canvas.width / 2;
+        this.cameraY = this.myPlayer.y - this.canvas.height / 2;
+        
+        // Clamp camera to map boundaries
+        this.cameraX = Math.max(0, Math.min(this.cameraX, this.worldWidth - this.canvas.width));
+        this.cameraY = Math.max(0, Math.min(this.cameraY, this.worldHeight - this.canvas.height));
+    }
+    
+    worldToScreen(worldX, worldY) {
+        return {
+            x: worldX - this.cameraX,
+            y: worldY - this.cameraY
+        };
+    }
+    
+    loadAvatarImage(avatarData) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.src = avatarData;
+        });
+    }
+    
+    async renderAvatar(player) {
+        if (!this.avatars[player.avatar]) return;
+        
+        const avatar = this.avatars[player.avatar];
+        const direction = player.facing || 'south';
+        const frame = player.animationFrame || 0;
+        
+        // Get the appropriate frame
+        const frameData = avatar.frames[direction]?.[frame];
+        if (!frameData) return;
+        
+        // Create cache key for this specific frame
+        const cacheKey = `${player.avatar}_${direction}_${frame}`;
+        
+        // Load image if not already cached
+        if (!this.imageCache.has(cacheKey)) {
+            const img = await this.loadAvatarImage(frameData);
+            this.imageCache.set(cacheKey, img);
+        }
+        
+        const img = this.imageCache.get(cacheKey);
+        const screenPos = this.worldToScreen(player.x, player.y);
+        
+        // Check if avatar is within viewport
+        if (screenPos.x < -50 || screenPos.x > this.canvas.width + 50 ||
+            screenPos.y < -50 || screenPos.y > this.canvas.height + 50) {
+            return;
+        }
+        
+        // Calculate avatar size (maintain aspect ratio)
+        const avatarSize = 32;
+        const aspectRatio = img.width / img.height;
+        const width = avatarSize;
+        const height = avatarSize / aspectRatio;
+        
+        // Center avatar on player position
+        const x = screenPos.x - width / 2;
+        const y = screenPos.y - height;
+        
+        // Draw avatar
+        this.ctx.drawImage(img, x, y, width, height);
+        
+        // Draw username label
+        this.ctx.fillStyle = 'white';
+        this.ctx.strokeStyle = 'black';
+        this.ctx.lineWidth = 2;
+        this.ctx.font = '12px Arial';
+        this.ctx.textAlign = 'center';
+        
+        const textX = screenPos.x;
+        const textY = screenPos.y - height - 5;
+        
+        // Draw text with outline
+        this.ctx.strokeText(player.username, textX, textY);
+        this.ctx.fillText(player.username, textX, textY);
+    }
+    
+    async render() {
         if (!this.worldImage) return;
         
         // Clear canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        // Draw world map at actual size, showing upper left corner
-        // This ensures the coordinate system matches (0,0) at top-left)
+        // Draw world map with camera offset
         this.ctx.drawImage(
             this.worldImage,
-            0, 0, this.worldWidth, this.worldHeight,  // source rectangle (full image)
-            0, 0, this.worldWidth, this.worldHeight  // destination rectangle (actual size)
+            this.cameraX, this.cameraY, this.canvas.width, this.canvas.height,  // source rectangle
+            0, 0, this.canvas.width, this.canvas.height  // destination rectangle
         );
+        
+        // Render all players
+        for (const playerId in this.players) {
+            await this.renderAvatar(this.players[playerId]);
+        }
     }
 }
 
